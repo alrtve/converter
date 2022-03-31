@@ -1,26 +1,15 @@
-/*
-Copyright © 2022 NAME HERE <EMAIL ADDRESS>
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
 package cmd
 
 import (
 	"converter/common"
 	"converter/converters"
+	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
+	"path"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -35,90 +24,138 @@ var convertCmd = &cobra.Command{
 		if format == "" {
 			format = "yml2json"
 		}
-		var converter common.FormatConverter
+		var (
+			converter      common.FormatConverter
+			sourceExt      string
+			destinationExt string
+		)
 		switch format {
 		case "yml2json":
-			converter = converters.NewYmlToJsonConverter()
-			prettyprint, _ := cmd.Flags().GetBool("prettyprint")
-			//cmd.Flags().BoolVar(&prettyprint, "prettyprint", false, "--prettyprint")
-			err := converter.WithParam("prettyprint", prettyprint)
-			if err != nil {
-				fmt.Printf("could not process prettyprint %v\n", err)
-				return
-			}
+			prettyPrint, _ := cmd.Flags().GetBool("prettyprint")
+			converter = converters.NewYmlToJsonConverter().WithPrettyPrint(prettyPrint)
+			sourceExt = "yml"
+			destinationExt = "json"
 		default:
-			fmt.Printf("format %s is not supported\n", format)
+			fmt.Printf("Error: format %s is not supported\n", format)
 		}
 
-		sourceFileName, _ := cmd.Flags().GetString("source")
-		destinationFileName, _ := cmd.Flags().GetString("destination")
-		overwriteExistingFile, _ := cmd.Flags().GetBool("overwrite")
-
-		if sourceFileName == destinationFileName {
-			fmt.Printf("source and destination are the same %s\n", sourceFileName)
-			return
-		}
+		sourceName, _ := cmd.Flags().GetString("source")
+		destinationName, _ := cmd.Flags().GetString("destination")
+		overwrite, _ := cmd.Flags().GetBool("overwrite")
 
 		// prepare
-		if st, err := os.Stat(sourceFileName); err != nil {
-			fmt.Printf("could not open source file %s: %v\n", sourceFileName, err)
-			return
-		} else if st.IsDir() {
-			fmt.Printf("source %s is dir \n", sourceFileName)
-			return
-		}
-		if st, err := os.Stat(destinationFileName); err == nil {
-			if st.IsDir() {
-				fmt.Printf("destnation %s is dir \n", destinationFileName)
-				return
-			}
-			if !overwriteExistingFile {
-				fmt.Printf("destination file exists, specify --force to overwite it \n")
-				return
-			}
-		}
 		var (
-			sourceReader      io.ReadCloser
-			destinationWriter io.WriteCloser
-			err               error
+			sourceFi       os.FileInfo
+			destinationFi  os.FileInfo
+			sourceErr      error
+			destinationErr error
 		)
-		if sourceReader, err = os.Open(sourceFileName); err != nil {
-			fmt.Printf("could not open source file %s: %v\n", sourceFileName, err)
+		if sourceFi, sourceErr = os.Stat(sourceName); sourceErr != nil {
+			fmt.Printf("Error: could not open file %s: %v\n", sourceName, sourceErr)
 			return
 		}
-		defer func() { sourceReader.Close() }()
-		if destinationWriter, err = os.Create(destinationFileName); err != nil {
-			fmt.Printf("could not open destination file %s: %v\n", destinationFileName, err)
+		if destinationFi, destinationErr = os.Stat(destinationName); destinationErr != nil && !errors.Is(destinationErr, os.ErrNotExist) {
+			fmt.Printf("Error: could not processin destination %s: %v\n", destinationName, destinationErr)
+		}
+
+		// both are files
+		if !sourceFi.IsDir() && (errors.Is(destinationErr, os.ErrNotExist) || !destinationFi.IsDir()) {
+			if sourceName == destinationName {
+				fmt.Printf("Error: source and destination are the same %s\n", sourceName)
+				return
+			}
+
+			if destinationErr == nil && !overwrite {
+				fmt.Printf("Error: destination file exists, specify --overwrite paramter to overwrite it\n")
+				return
+			}
+			if err := convertFile(sourceName, destinationName, converter, overwrite); err != nil {
+				fmt.Printf("Error: %v\n", err)
+				return
+			}
+		} else if sourceFi.IsDir() && (errors.Is(destinationErr, os.ErrNotExist) || destinationFi.IsDir()) {
+			// both are dirs
+			overwrite = true
+			if err := convertDir(sourceName, destinationName, sourceExt, destinationExt, converter, overwrite); err != nil {
+				fmt.Printf("Error: could not convert %s -> %s: %v\n", sourceName, destinationName, err)
+				return
+			}
+		} else {
+			fmt.Printf("Error: both source and destination must be either files or dirs\n")
 			return
 		}
-		defer func() { destinationWriter.Close() }()
-		err = converter.Convert(destinationWriter, sourceReader)
-		if err != nil {
-			fmt.Printf("conversion error: %v\n", err)
-			return
-		}
-		fmt.Println("successfully converted\n")
+
+		fmt.Printf("Successfully converted\n")
 	},
 }
 
+func convertFile(sourceName, destinationName string, converter common.FormatConverter, overwrite bool) (err error) {
+	if _, err := os.Stat(destinationName); err == nil && !overwrite {
+		return nil
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	var (
+		sourceReader      io.ReadCloser
+		destinationWriter io.WriteCloser
+	)
+	if sourceReader, err = os.Open(sourceName); err != nil {
+		return fmt.Errorf("could not open source file %s: %w", sourceName, err)
+	}
+	defer func() { sourceReader.Close() }()
+	if destinationWriter, err = os.Create(destinationName); err != nil {
+		return fmt.Errorf("could not open destination file %s: %w", destinationName, err)
+	}
+	defer func() { destinationWriter.Close() }()
+	if err := converter.Convert(destinationWriter, sourceReader); err != nil {
+		return fmt.Errorf("conversion error %s -> %s: %w", sourceName, destinationName, err)
+	}
+	return nil
+}
+
+func convertDir(sourceDir, destinationDir, sourceExt, destinationExt string, converter common.FormatConverter, overwrite bool) error {
+	sourceFis, err := ioutil.ReadDir(sourceDir)
+	if err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(destinationDir); err != nil && errors.Is(err, os.ErrNotExist) {
+		if err := os.Mkdir(destinationDir, os.ModePerm); err != nil {
+			return fmt.Errorf("could not create destination dir %s: %v\n", destinationDir, err)
+		}
+	} else if err != nil {
+		return err
+	}
+
+	for _, stat := range sourceFis {
+		if stat.IsDir() {
+			if err := convertDir(path.Join(sourceDir, stat.Name()), path.Join(destinationDir, stat.Name()), sourceExt, destinationExt, converter, overwrite); err != nil {
+				return err
+			}
+		} else {
+			parts := strings.Split(stat.Name(), ".")
+			ext := parts[len(parts)-1]
+			if ext != sourceExt {
+				continue
+			}
+			parts[len(parts)-1] = destinationExt
+			if err := convertFile(path.Join(sourceDir, stat.Name()), path.Join(destinationDir, strings.Join(parts, ".")), converter, overwrite); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func init() {
-	convertCmd.Flags().StringP("format", "f", "yml2json", "--format=yml2json")
-	convertCmd.Flags().BoolP("prettyprint", "", false, "--prettyprint")
-	convertCmd.Flags().StringP("source", "s", "", "--source=/home/www/example.yml")
+	convertCmd.Flags().StringP("format", "f", "yml2json", "Conversion direction in from2to format (i.e. yml2json)")
+	convertCmd.Flags().StringP("source", "s", "", "Source file or dir")
+	convertCmd.Flags().StringP("destination", "d", "", "Destination file or dir")
+	convertCmd.Flags().BoolP("prettyprint", "", false, "Prettyprint output")
+	convertCmd.Flags().BoolP("overwrite", "o", false, "Overwrite destination file if exists one. For directory source and destination the flag is always set")
+
 	convertCmd.MarkFlagRequired("source")
-	convertCmd.Flags().StringP("destination", "d", "", "--destination=/home/www/example.json")
 	convertCmd.MarkFlagRequired("destination")
-	convertCmd.Flags().BoolP("overwrite", "o", false, "--overwrite")
 
 	rootCmd.AddCommand(convertCmd)
-
-	// Here you will define your flags and configuration settings.
-
-	// Cobra supports Persistent Flags which will work for this command
-	// and all subcommands, e.g.:
-	// convertCmd.PersistentFlags().String("foo", "", "A help for foo")
-
-	// Cobra supports local flags which will only run when this command
-	// is called directly, e.g.:
-	// convertCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }

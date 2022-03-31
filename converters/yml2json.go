@@ -2,12 +2,12 @@ package converters
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"io/ioutil"
 )
 import "gopkg.in/yaml.v2"
 
+// YmlToJsonConverter converts from yml to json formats
 type YmlToJsonConverter struct {
 	prettyPrint bool
 }
@@ -39,16 +39,9 @@ func (c *YmlToJsonConverter) Convert(w io.Writer, r io.Reader) error {
 	return err
 }
 
-func (c *YmlToJsonConverter) WithParam(name string, value interface{}) error {
-	switch name {
-	case "prettyprint":
-		if prettyprint, ok := value.(bool); ok {
-			c.prettyPrint = prettyprint
-			return nil
-		}
-		return fmt.Errorf("param prettyprint must have not value")
-	}
-	return nil
+func (c *YmlToJsonConverter) WithPrettyPrint(prettyprint bool) *YmlToJsonConverter {
+	c.prettyPrint = prettyprint
+	return c
 }
 
 func (c *YmlToJsonConverter) getNormalized(i interface{}) interface{} {
