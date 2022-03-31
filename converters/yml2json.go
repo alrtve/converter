@@ -2,12 +2,14 @@ package converters
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/ioutil"
 )
 import "gopkg.in/yaml.v2"
 
 type YmlToJsonConverter struct {
+	prettyPrint bool
 }
 
 func NewYmlToJsonConverter() *YmlToJsonConverter {
@@ -24,25 +26,42 @@ func (c *YmlToJsonConverter) Convert(w io.Writer, r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	tmpN := c.convert(tmp)
-	if data, err = json.Marshal(tmpN); err != nil {
+	tmpN := c.getNormalized(tmp)
+	if c.prettyPrint {
+		data, err = json.MarshalIndent(tmpN, "", "    ")
+	} else {
+		data, err = json.Marshal(tmpN)
+	}
+	if err != nil {
 		return err
 	}
 	_, err = w.Write(data)
 	return err
 }
 
-func (c *YmlToJsonConverter) convert(i interface{}) interface{} {
+func (c *YmlToJsonConverter) WithParam(name string, value interface{}) error {
+	switch name {
+	case "prettyprint":
+		if prettyprint, ok := value.(bool); ok {
+			c.prettyPrint = prettyprint
+			return nil
+		}
+		return fmt.Errorf("param prettyprint must have not value")
+	}
+	return nil
+}
+
+func (c *YmlToJsonConverter) getNormalized(i interface{}) interface{} {
 	switch x := i.(type) {
 	case map[interface{}]interface{}:
 		m2 := map[string]interface{}{}
 		for k, v := range x {
-			m2[k.(string)] = c.convert(v)
+			m2[k.(string)] = c.getNormalized(v)
 		}
 		return m2
 	case []interface{}:
 		for i, v := range x {
-			x[i] = c.convert(v)
+			x[i] = c.getNormalized(v)
 		}
 	}
 	return i

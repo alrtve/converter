@@ -29,15 +29,9 @@ import (
 var convertCmd = &cobra.Command{
 	Use:   "convert",
 	Short: "Converts file from one format to another",
-	Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command. For example:
-
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+	Long:  `Converts file from one format to another`,
 	Run: func(cmd *cobra.Command, args []string) {
-		format := ""
-		cmd.Flags().StringVar(&format, "format", "", "for instance yml2json")
+		format, _ := cmd.Flags().GetString("format")
 		if format == "" {
 			format = "yml2json"
 		}
@@ -45,13 +39,20 @@ to quickly create a Cobra application.`,
 		switch format {
 		case "yml2json":
 			converter = converters.NewYmlToJsonConverter()
+			prettyprint, _ := cmd.Flags().GetBool("prettyprint")
+			//cmd.Flags().BoolVar(&prettyprint, "prettyprint", false, "--prettyprint")
+			err := converter.WithParam("prettyprint", prettyprint)
+			if err != nil {
+				fmt.Printf("could not process prettyprint %v\n", err)
+				return
+			}
 		default:
 			fmt.Printf("format %s is not supported\n", format)
 		}
 
 		sourceFileName, _ := cmd.Flags().GetString("source")
 		destinationFileName, _ := cmd.Flags().GetString("destination")
-		overwriteExistingFile, _ := cmd.Flags().GetBool("force")
+		overwriteExistingFile, _ := cmd.Flags().GetBool("overwrite")
 
 		if sourceFileName == destinationFileName {
 			fmt.Printf("source and destination are the same %s\n", sourceFileName)
@@ -101,11 +102,13 @@ to quickly create a Cobra application.`,
 }
 
 func init() {
+	convertCmd.Flags().StringP("format", "f", "yml2json", "--format=yml2json")
+	convertCmd.Flags().BoolP("prettyprint", "", false, "--prettyprint")
 	convertCmd.Flags().StringP("source", "s", "", "--source=/home/www/example.yml")
 	convertCmd.MarkFlagRequired("source")
 	convertCmd.Flags().StringP("destination", "d", "", "--destination=/home/www/example.json")
 	convertCmd.MarkFlagRequired("destination")
-	convertCmd.Flags().BoolP("force", "f", false, "--force")
+	convertCmd.Flags().BoolP("overwrite", "o", false, "--overwrite")
 
 	rootCmd.AddCommand(convertCmd)
 
