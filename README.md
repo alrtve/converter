@@ -18,7 +18,7 @@ conveter help
 ```
 make build GOROOT=goorot
 ```
-Примеры
+Пример:
 ```
 make build GOROOT='/home/www/apps/go/go1.16.5'
 ```
